@@ -12,6 +12,7 @@ on:
 env:
   PYTHON_VERSION: '3.12'
   AZURE_WEBAPP_NAME: 'azure-swa-demo-api'
+  AZURE_RESOURCE_GROUP: 'azure-swa-demo-rg'
 
 jobs:
   build-and-deploy:
@@ -31,20 +32,20 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v6
 
-      - name: Create requirements.txt
+      - name: Create requirements.txt and install dependencies
         working-directory: ./backend
         run: |
           uv pip compile pyproject.toml -o requirements.txt
+          pip install -r requirements.txt --target=".python_packages/lib/site-packages"
 
       - name: Create deployment package
         working-directory: ./backend
         run: |
-          zip -r ../backend.zip . -x ".venv/*" -x "__pycache__/*" -x "*.db" -x ".git/*"
+          zip -r ../deploy.zip . -x ".venv/*" -x "__pycache__/*" -x "*.db" -x ".git/*" -x "uv.lock"
 
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: ./backend.zip
-          type: zip
+          package: ./deploy.zip
