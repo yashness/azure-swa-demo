@@ -1,19 +1,41 @@
 import os
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
+from sqlalchemy.pool import QueuePool
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Database setup - supports SQLite (local) or PostgreSQL (production via Neon)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./users.db")
+logger.info(f"Database URL scheme: {DATABASE_URL.split('://')[0] if '://' in DATABASE_URL else 'unknown'}")
 
 # Configure connection args based on database type
 connect_args = {}
+engine_kwargs = {}
+
 if DATABASE_URL.startswith("sqlite"):
     connect_args = {"check_same_thread": False}
+else:
+    # PostgreSQL (Neon) configuration with connection pooling
+    # Neon free tier can have cold starts of 5-10+ seconds
+    engine_kwargs = {
+        "poolclass": QueuePool,
+        "pool_size": 2,
+        "max_overflow": 3,
+        "pool_timeout": 60,  # Wait up to 60s for connection (Neon cold start)
+        "pool_pre_ping": True,  # Verify connections are alive
+        "pool_recycle": 300,  # Recycle connections every 5 min
+    }
+    # Set connect timeout for Neon cold starts
+    connect_args = {"connect_timeout": 60}
 
-engine = create_engine(DATABASE_URL, connect_args=connect_args)
+engine = create_engine(DATABASE_URL, connect_args=connect_args, **engine_kwargs)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -29,34 +51,66 @@ class User(Base):
 
 # Seed data
 def seed_database():
-    db = SessionLocal()
-    try:
-        if db.query(User).count() == 0:
-            users = [
-                User(name="Alice Johnson", email="alice@example.com"),
-                User(name="Bob Smith", email="bob@example.com"),
-                User(name="Charlie Brown", email="charlie@example.com"),
-                User(name="Diana Prince", email="diana@example.com"),
-                User(name="Eve Wilson", email="eve@example.com"),
-            ]
-            db.add_all(users)
-            db.commit()
-            print("Database seeded with dummy users")
-    except Exception as e:
-        # Handle race condition with multiple workers
-        db.rollback()
-        print(f"Database seeding skipped (may already exist): {e}")
-    finally:
-        db.close()
+    """Seed database with initial data. Handles cold starts with retry."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        db = SessionLocal()
+        try:
+            if db.query(User).count() == 0:
+                users = [
+                    User(name="Alice Johnson", email="alice@example.com"),
+                    User(name="Bob Smith", email="bob@example.com"),
+                    User(name="Charlie Brown", email="charlie@example.com"),
+                    User(name="Diana Prince", email="diana@example.com"),
+                    User(name="Eve Wilson", email="eve@example.com"),
+                ]
+                db.add_all(users)
+                db.commit()
+                logger.info("Database seeded with dummy users")
+            else:
+                logger.info("Database already has users, skipping seed")
+            return  # Success
+        except Exception as e:
+            # Handle race condition with multiple workers or connection issues
+            db.rollback()
+            logger.warning(f"Database seeding attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(2 ** attempt)  # Exponential backoff
+        finally:
+            db.close()
+    logger.error("Database seeding failed after all retries")
+
+
+def init_database():
+    """Initialize database tables with retry for cold starts."""
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Attempting database initialization (attempt {attempt + 1})")
+            Base.metadata.create_all(bind=engine)
+            logger.info("Database tables created successfully")
+            return True
+        except Exception as e:
+            logger.warning(f"Database init attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                import time
+                time.sleep(2 ** attempt)  # Exponential backoff
+    logger.error("Database initialization failed after all retries")
+    return False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
-    Base.metadata.create_all(bind=engine)
-    seed_database()
+    logger.info("Application starting up...")
+    if init_database():
+        seed_database()
+    else:
+        logger.error("Failed to initialize database - app may not work correctly")
     yield
     # Shutdown
+    logger.info("Application shutting down...")
 
 
 # FastAPI app
