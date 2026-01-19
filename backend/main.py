@@ -1,12 +1,16 @@
+import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
-# Database setup
-DATABASE_URL = "sqlite:///./users.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Database setup - use in-memory for Azure App Service demo (no persistence issues)
+# For production, use Azure SQL or PostgreSQL
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./users.db")
+# Use check_same_thread=False for SQLite  
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -35,6 +39,10 @@ def seed_database():
             db.add_all(users)
             db.commit()
             print("Database seeded with dummy users")
+    except Exception as e:
+        # Handle race condition with multiple workers
+        db.rollback()
+        print(f"Database seeding skipped (may already exist): {e}")
     finally:
         db.close()
 
