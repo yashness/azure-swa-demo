@@ -5,11 +5,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine, Column, Integer, String
 from sqlalchemy.orm import sessionmaker, Session, declarative_base
 
-# Database setup - use in-memory for Azure App Service demo (no persistence issues)
-# For production, use Azure SQL or PostgreSQL
+# Database setup - supports SQLite (local) or PostgreSQL (production via Neon)
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./users.db")
-# Use check_same_thread=False for SQLite  
-connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+# Configure connection args based on database type
+connect_args = {}
+if DATABASE_URL.startswith("sqlite"):
+    connect_args = {"check_same_thread": False}
+
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -20,8 +23,8 @@ class User(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    email = Column(String, unique=True, index=True)
+    name = Column(String(100), index=True)
+    email = Column(String(255), unique=True, index=True)
 
 
 # Seed data

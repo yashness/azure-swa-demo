@@ -22,6 +22,8 @@ idna==3.11
     # via anyio
 packaging==25.0
     # via gunicorn
+psycopg2-binary==2.9.11
+    # via backend (pyproject.toml)
 pydantic==2.12.5
     # via fastapi
 pydantic-core==2.41.5
