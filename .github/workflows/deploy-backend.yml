@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: 'production'
-      url: ${{ steps.deploy-to-webapp.outputs.webapp-url }}
+      url: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net
 
     steps:
       - uses: actions/checkout@v4
@@ -36,10 +36,15 @@ jobs:
         run: |
           uv pip compile pyproject.toml -o requirements.txt
 
+      - name: Create deployment package
+        working-directory: ./backend
+        run: |
+          zip -r ../backend.zip . -x ".venv/*" -x "__pycache__/*" -x "*.db" -x ".git/*"
+
       - name: Deploy to Azure App Service
-        id: deploy-to-webapp
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: ./backend
+          package: ./backend.zip
+          type: zip
