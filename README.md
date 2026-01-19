@@ -2,6 +2,12 @@
 
 A full-stack demo application showcasing deployment to Azure Static Web Apps (frontend) and Azure App Service (backend).
 
+## 🌐 Live Demo
+
+- **Frontend**: https://icy-tree-076e2650f.2.azurestaticapps.net
+- **Backend API**: https://azure-swa-demo-api.azurewebsites.net
+- **API Docs**: https://azure-swa-demo-api.azurewebsites.net/docs
+
 ## 🚀 Tech Stack
 
 ### Frontend
