@@ -6,7 +6,8 @@ This document provides guidelines for AI coding agents working on this project.
 
 This is a full-stack Azure deployment demo with:
 - **Frontend**: Vite + Bun + TypeScript → Azure Static Web Apps
-- **Backend**: FastAPI + SQLite + uv (Python 3.14) → Azure App Service
+- **Backend**: FastAPI + PostgreSQL (Neon) + uv (Python 3.12) → Azure App Service
+- **Database**: Neon PostgreSQL (serverless) for production, SQLite for local dev
 
 ## Technology Choices
 
@@ -20,21 +21,53 @@ This is a full-stack Azure deployment demo with:
 ### Backend
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Python | 3.14 | Runtime |
+| Python | 3.12 | Runtime |
 | uv | Latest | Package manager (by Astral) |
 | FastAPI | 0.128+ | Web framework |
 | SQLAlchemy | 2.x | ORM |
-| SQLite | 3 | Database |
+| psycopg2-binary | 2.9+ | PostgreSQL driver |
 | Uvicorn | Latest | ASGI server (dev) |
-| Gunicorn | Latest | WSGI server (prod) |
+| Gunicorn | Latest | ASGI server (prod) |
+
+### Database
+| Environment | Database | Notes |
+|-------------|----------|-------|
+| Local Dev | SQLite | Zero config, fast iteration |
+| Production | Neon PostgreSQL | Serverless, free tier available |
 
 ### Infrastructure
 | Technology | Purpose |
 |------------|---------|
-| Azure Static Web Apps | Frontend hosting |
-| Azure App Service | Backend hosting |
+| Azure Static Web Apps | Frontend hosting (CDN + HTTPS) |
+| Azure App Service | Backend hosting (Linux + Python) |
+| Neon PostgreSQL | Serverless PostgreSQL database |
 | GitHub Actions | CI/CD |
-| DevContainer | Development environment |
+
+## ⚠️ Critical Gotchas
+
+### 1. Backend File MUST be `application.py`
+Azure Oryx auto-detection looks for `application.py` or `app.py`, NOT `main.py`.
+```bash
+# ❌ Wrong: main.py → Azure shows default page
+# ✅ Correct: application.py → Azure runs your app
+```
+
+### 2. Always Generate requirements.txt
+Azure uses `requirements.txt`, not `pyproject.toml`:
+```bash
+cd backend && uv pip compile pyproject.toml -o requirements.txt
+```
+
+### 3. String Columns Need Explicit Length
+PostgreSQL requires length for VARCHAR:
+```python
+# ❌ Wrong: String() - fails on PostgreSQL
+# ✅ Correct: String(100) - works everywhere
+name = Column(String(100), index=True)
+```
+
+### 4. Neon Cold Start Handling
+Free tier sleeps after inactivity. App has retry logic and 60s+ timeouts.
 
 ## Code Guidelines
 
@@ -48,7 +81,7 @@ interface User {
   email: string
 }
 
-// Use environment variables for API URL
+// Use environment variables for API URL (MUST have VITE_ prefix!)
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 // Use async/await for API calls
@@ -83,25 +116,35 @@ async def get_users(db: Session = Depends(get_db)):
 
 ```
 /
-├── frontend/           # Vite/Bun frontend
-│   ├── src/           # Source files
-│   ├── public/        # Static assets
-│   └── dist/          # Build output (gitignored)
-├── backend/           # FastAPI backend
-│   ├── main.py        # Main application
-│   ├── .venv/         # Virtual environment (gitignored)
-│   └── *.db           # SQLite database (gitignored)
-├── .devcontainer/     # DevContainer configuration
-└── .github/workflows/ # CI/CD pipelines
+├── frontend/              # Vite/Bun frontend
+│   ├── src/               # Source files
+│   ├── public/            # Static assets
+│   ├── dist/              # Build output (gitignored)
+│   ├── .env.development   # Local API URL
+│   ├── .env.production    # Prod API URL (template)
+│   └── .env.example       # Template for developers
+├── backend/               # FastAPI backend
+│   ├── application.py     # ⚠️ Main app (NOT main.py!)
+│   ├── pyproject.toml     # Dependencies definition
+│   ├── requirements.txt   # Generated dependencies (for Azure)
+│   ├── .venv/             # Virtual environment (gitignored)
+│   ├── .env               # Local secrets (gitignored)
+│   ├── .env.example       # Template for developers
+│   └── *.db               # SQLite database (gitignored)
+├── docs/                  # Documentation
+│   ├── FULLSTACK_DEPLOYMENT_GUIDE.md  # Complete deployment guide
+│   └── AZURE_DEPLOYMENT_GUIDE.md      # Original SQLite guide
+├── .github/workflows/     # CI/CD pipelines
+└── AGENTS.md              # This file
 ```
 
 ## Common Tasks
 
 ### Add a new API endpoint
-1. Edit `backend/main.py`
+1. Edit `backend/application.py`
 2. Add route with proper type hints
-3. Test locally with `uv run uvicorn main:app --reload`
-4. Update API documentation in README
+3. Test locally with `uv run uvicorn application:app --reload`
+4. Update API documentation
 
 ### Add a new frontend feature
 1. Edit files in `frontend/src/`
@@ -118,6 +161,7 @@ cd frontend && bun update
 **Backend:**
 ```bash
 cd backend && uv add <package>
+uv pip compile pyproject.toml -o requirements.txt  # Regenerate!
 ```
 
 ### Run locally
@@ -125,7 +169,7 @@ cd backend && uv add <package>
 **Full stack:**
 ```bash
 # Terminal 1 - Backend
-cd backend && uv run uvicorn main:app --reload --port 8000
+cd backend && uv run uvicorn application:app --reload --port 8000
 
 # Terminal 2 - Frontend
 cd frontend && bun run dev
@@ -138,22 +182,44 @@ cd frontend && bun run dev
 |----------|-------------|---------|
 | `VITE_API_URL` | Backend API URL | `http://localhost:8000` |
 
+⚠️ **MUST use `VITE_` prefix** for client-side variables!
+
 ### Backend
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | SQLite connection | `sqlite:///./users.db` |
+| `DATABASE_URL` | Database connection string | `sqlite:///./dev.db` |
+| `DEBUG` | Debug mode | `true` |
 
-## Deployment Notes
+**Local SQLite:**
+```
+DATABASE_URL=sqlite:///./dev.db
+```
 
-### Frontend (Azure Static Web Apps)
-- Build output: `frontend/dist`
-- No API functions (separate backend)
-- Configure CORS on backend for SWA URL
+**Production (Neon):**
+```
+DATABASE_URL=postgresql://user:pass@ep-xxx.neon.tech/neondb?sslmode=require
+```
 
-### Backend (Azure App Service)
-- Python 3.14 runtime
-- Startup command: `gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000`
-- Enable SCM_DO_BUILD_DURING_DEPLOYMENT for automatic pip install
+## Deployment
+
+### Startup Command (Azure App Service)
+```bash
+gunicorn application:app --workers 1 --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:8000 --timeout 120
+```
+
+Key points:
+- `application:app` - file must be `application.py`
+- `--workers 1` - safe for SQLite, can increase for PostgreSQL
+- `--timeout 120` - handles Neon cold starts
+
+### Quick Deploy
+```bash
+# Backend
+cd backend && az webapp up --name YOUR_APP_NAME --runtime "PYTHON:3.12"
+
+# Frontend (via CI/CD)
+git push origin main  # Triggers GitHub Actions
+```
 
 ## Testing
 
@@ -164,7 +230,7 @@ cd frontend && bun run build  # Type checking + build
 
 ### Backend
 ```bash
-cd backend && uv run python -c "from main import app; print('OK')"
+cd backend && uv run python -c "from application import app; print('OK')"
 ```
 
 ## Troubleshooting
@@ -175,9 +241,9 @@ lsof -ti:8000 | xargs kill -9  # Kill process on port 8000
 lsof -ti:5173 | xargs kill -9  # Kill process on port 5173
 ```
 
-### Database reset
+### Database reset (local)
 ```bash
-cd backend && rm -f users.db && uv run uvicorn main:app
+cd backend && rm -f dev.db && uv run uvicorn application:app
 ```
 
 ### Dependency issues
@@ -187,4 +253,17 @@ cd frontend && rm -rf node_modules bun.lock && bun install
 
 # Backend
 cd backend && rm -rf .venv uv.lock && uv sync
+uv pip compile pyproject.toml -o requirements.txt
 ```
+
+### Check Azure logs
+```bash
+az webapp log tail --name YOUR_APP_NAME --resource-group YOUR_RG_NAME
+```
+
+## Links
+
+- **Frontend**: https://icy-tree-076e2650f.2.azurestaticapps.net
+- **Backend**: https://azure-swa-demo-api.azurewebsites.net
+- **Neon Dashboard**: https://console.neon.tech
+- **Deployment Guide**: [docs/FULLSTACK_DEPLOYMENT_GUIDE.md](docs/FULLSTACK_DEPLOYMENT_GUIDE.md)
