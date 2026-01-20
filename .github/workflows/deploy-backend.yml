@@ -41,7 +41,7 @@ jobs:
           zip -r ../deploy.zip . -x ".venv/*" -x "__pycache__/*" -x "*.db" -x ".git/*" -x "uv.lock"
 
       - name: Deploy to Azure App Service
-        uses: azure/webapps-deploy@v3
+        uses: azure/webapps-deploy@v2
         with:
           app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
