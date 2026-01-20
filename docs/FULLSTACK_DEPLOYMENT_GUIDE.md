@@ -1301,6 +1301,57 @@ cd backend && az webapp up --name $BACKEND_NAME --runtime "PYTHON:3.12"
 
 ---
 
+### ❌ Pitfall 11: Publish profile is invalid (GitHub Actions deployment)
+
+**Symptom:** `Deployment Failed, Error: Publish profile is invalid for app-name and slot-name provided`
+
+**Why:** Basic Authentication is disabled on the Azure App Service. The `azure/webapps-deploy` action uses Basic Auth with publish profile credentials.
+
+**Solution:**
+```bash
+# Check if Basic Auth is disabled
+az rest --method get --uri "https://management.azure.com/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.Web/sites/{app}/basicPublishingCredentialsPolicies?api-version=2022-03-01"
+
+# Enable Basic Auth for SCM (deployment)
+az rest --method put \
+  --uri "https://management.azure.com/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.Web/sites/{app}/basicPublishingCredentialsPolicies/scm?api-version=2022-03-01" \
+  --body '{"properties":{"allow":true}}'
+
+# Enable Basic Auth for FTP (optional)
+az rest --method put \
+  --uri "https://management.azure.com/subscriptions/{sub-id}/resourceGroups/{rg}/providers/Microsoft.Web/sites/{app}/basicPublishingCredentialsPolicies/ftp?api-version=2022-03-01" \
+  --body '{"properties":{"allow":true}}'
+
+# Get fresh publish profile and update GitHub secret
+az webapp deployment list-publishing-profiles --name {app} --resource-group {rg} --xml > publish_profile.xml
+gh secret set AZURE_WEBAPP_PUBLISH_PROFILE < publish_profile.xml
+```
+
+---
+
+### ❌ Pitfall 12: Stale publish profile after app recreation
+
+**Symptom:** Same as Pitfall 11 - "Publish profile is invalid"
+
+**Why:** If you delete and recreate the App Service, the old publish profile stored in GitHub secrets becomes invalid.
+
+**Solution:**
+```bash
+# Get fresh publish profile from Azure
+az webapp deployment list-publishing-profiles \
+  --name YOUR_APP_NAME \
+  --resource-group YOUR_RG_NAME \
+  --xml > /tmp/publish_profile.xml
+
+# Update GitHub secret
+gh secret set AZURE_WEBAPP_PUBLISH_PROFILE --repo YOUR_REPO < /tmp/publish_profile.xml
+
+# Trigger workflow again
+gh workflow run deploy-backend.yml --repo YOUR_REPO
+```
+
+---
+
 ## 13. Deployment Checklist
 
 ### ✅ Pre-Deployment
