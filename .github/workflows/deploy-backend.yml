@@ -17,9 +17,6 @@ env:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: 'production'
-      url: https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net
 
     steps:
       - uses: actions/checkout@v4
